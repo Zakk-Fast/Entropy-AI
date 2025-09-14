@@ -1,9 +1,16 @@
 import { create } from 'zustand';
-import { Conversation, ModelType, Message } from '@/types';
+import { ModelType, Conversation, Message } from '@/types';
 
 interface EntropyStore {
+  // Loading state
+  isInitialized: boolean;
+  setIsInitialized: (initialized: boolean) => void;
+  
+  // Conversations
   conversations: Conversation[];
   currentConversation: Conversation | null;
+  
+  // Model and UI state
   selectedModel: ModelType;
   isLoading: boolean;
   
@@ -19,83 +26,145 @@ interface EntropyStore {
 }
 
 export const useEntropyStore = create<EntropyStore>((set, get) => ({
+  // Initial state
+  isInitialized: false,
   conversations: [],
   currentConversation: null,
   selectedModel: 'entropy-standard',
   isLoading: false,
 
+  setIsInitialized: (initialized) => set({ isInitialized: initialized }),
+
   setSelectedModel: (model) => set({ selectedModel: model }),
+  
   setIsLoading: (loading) => set({ isLoading: loading }),
 
   createNewConversation: () => {
-    const newConvo: Conversation = {
+    const newConversation: Conversation = {
       id: Date.now().toString(),
       title: 'New Chat',
       messages: [],
       createdAt: new Date(),
     };
+    
     set((state) => ({
-      conversations: [newConvo, ...state.conversations],
-      currentConversation: newConvo,
+      conversations: [newConversation, ...state.conversations],
+      currentConversation: newConversation,
     }));
+    
     get().saveConversationsToStorage();
   },
 
-  setCurrentConversation: (conversation) => set({ currentConversation: conversation }),
+  setCurrentConversation: (conversation) => {
+    set({ currentConversation: conversation });
+  },
 
   addMessage: (conversationId, message) => {
     set((state) => {
-      const updatedConversations = state.conversations.map((conv) =>
-        conv.id === conversationId
-          ? { ...conv, messages: [...conv.messages, message] }
-          : conv
-      );
-      
-      const currentConv = updatedConversations.find(c => c.id === conversationId);
-      
+      const updatedConversations = state.conversations.map((conv) => {
+        if (conv.id === conversationId) {
+          return {
+            ...conv,
+            messages: [...conv.messages, message],
+            updatedAt: new Date(),
+          };
+        }
+        return conv;
+      });
+
+      const updatedCurrentConversation = 
+        state.currentConversation?.id === conversationId
+          ? { 
+              ...state.currentConversation, 
+              messages: [...state.currentConversation.messages, message],
+              updatedAt: new Date(),
+            }
+          : state.currentConversation;
+
       return {
         conversations: updatedConversations,
-        currentConversation: state.currentConversation?.id === conversationId 
-          ? currentConv || state.currentConversation 
-          : state.currentConversation,
+        currentConversation: updatedCurrentConversation,
       };
     });
+    
     get().saveConversationsToStorage();
   },
 
   updateConversationTitle: (conversationId, title) => {
     set((state) => {
       const updatedConversations = state.conversations.map((conv) =>
-        conv.id === conversationId ? { ...conv, title } : conv
+        conv.id === conversationId ? { ...conv, title, updatedAt: new Date() } : conv
       );
-      
+
+      const updatedCurrentConversation =
+        state.currentConversation?.id === conversationId
+          ? { ...state.currentConversation, title, updatedAt: new Date() }
+          : state.currentConversation;
+
       return {
         conversations: updatedConversations,
-        currentConversation: state.currentConversation?.id === conversationId
-          ? { ...state.currentConversation, title }
-          : state.currentConversation,
+        currentConversation: updatedCurrentConversation,
       };
     });
+    
     get().saveConversationsToStorage();
   },
 
   loadConversationsFromStorage: () => {
-    if (typeof window !== 'undefined') {
+    try {
       const stored = localStorage.getItem('entropy-conversations');
+      const storedCurrent = localStorage.getItem('entropy-current-conversation');
+      
       if (stored) {
-        const conversations = JSON.parse(stored);
+        const conversations = JSON.parse(stored).map((conv: Conversation) => ({
+          ...conv,
+          createdAt: new Date(conv.createdAt),
+          messages: conv.messages.map((msg: Message) => ({
+            ...msg,
+            timestamp: new Date(msg.timestamp),
+          })),
+        }));
+        
+        let currentConversation = null;
+        if (storedCurrent) {
+          const currentId = JSON.parse(storedCurrent);
+          currentConversation = conversations.find((conv: Conversation) => conv.id === currentId) || null;
+        }
+        
         set({ 
-          conversations,
-          currentConversation: conversations[0] || null 
+          conversations, 
+          currentConversation,
+          isInitialized: true 
+        });
+      } else {
+        // No stored conversations - first time user
+        set({ 
+          conversations: [], 
+          currentConversation: null,
+          isInitialized: true 
         });
       }
+    } catch (error) {
+      console.error('Error loading conversations:', error);
+      set({ 
+        conversations: [], 
+        currentConversation: null,
+        isInitialized: true 
+      });
     }
   },
 
   saveConversationsToStorage: () => {
-    if (typeof window !== 'undefined') {
-      const { conversations } = get();
+    const { conversations, currentConversation } = get();
+    try {
       localStorage.setItem('entropy-conversations', JSON.stringify(conversations));
+      if (currentConversation) {
+        localStorage.setItem('entropy-current-conversation', JSON.stringify(currentConversation.id));
+      } else {
+        localStorage.removeItem('entropy-current-conversation');
+      }
+    } catch (error) {
+      console.error('Error saving conversations:', error);
     }
   },
 }));
